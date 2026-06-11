@@ -1,7 +1,8 @@
 #Requires -RunAsAdministrator
-# Windows 11 Optimization Script v1.1 - Interactive Menu
+# Windows 11 Optimization Script v2.0 - Interactive Menu
+# Updated for 24H2/25H2 AI features (Recall, Click to Do, Input Insights, AI Fabric)
 # Creates a restore point before changes. Logs to %TEMP%.
-# Preserves: Print Spooler, Windows Search, Windows Scan, WIA (scanner drivers)
+# Preserves: Print Spooler, Windows Search, Windows Scan, WIA (scanner drivers), WSL, VMware
 
 $ErrorActionPreference = 'SilentlyContinue'
 $LogFile = (Join-Path $env:TEMP ('Win11Optimize_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log'))
@@ -35,7 +36,11 @@ function Set-RegistryValue {
 function Disable-ServiceSafe {
     param([string]$ServiceName, [string]$DisplayName)
     # Protected services - never disable these
-    $protected = @('Spooler', 'WSearch', 'WiaRpc', 'StiSvc', 'PrintWorkflowUserSvc')
+    $protected = @(
+        'Spooler', 'WSearch', 'WiaRpc', 'StiSvc', 'PrintWorkflowUserSvc',
+        'LxssManager', 'WslService',
+        'VMAuthdService', 'VMnetDHCP', 'VMUSBArbService', 'VMwareHostd'
+    )
     if ($protected -contains $ServiceName) {
         Write-Log ('PROTECTED - skipped: ' + $DisplayName + ' - ' + $ServiceName) 'WARN'
         return
@@ -81,8 +86,8 @@ function Show-Banner {
     Clear-Host
     Write-Host ''
     Write-Host '  ======================================================' -ForegroundColor DarkCyan
-    Write-Host '         Windows 11 Optimization Script v1.1            ' -ForegroundColor DarkCyan
-    Write-Host '            Run as Administrator required                ' -ForegroundColor DarkCyan
+    Write-Host '         Windows 11 Optimization Script v2.0            ' -ForegroundColor DarkCyan
+    Write-Host '          Run as Administrator - 24H2/25H2              ' -ForegroundColor DarkCyan
     Write-Host '  ======================================================' -ForegroundColor DarkCyan
     Write-Host ''
 }
@@ -92,24 +97,62 @@ function Invoke-RemoveAICopilot {
     Write-Host ''
     Write-Host '  -- Removing AI / Copilot Features --' -ForegroundColor Magenta
 
+    # Appx packages - Copilot and AI components
     Remove-AppxSafe '*Microsoft.Copilot*'
     Remove-AppxSafe '*Microsoft.Windows.Ai*'
     Remove-AppxSafe '*MicrosoftWindows.Client.AIX*'
+    Remove-AppxSafe '*Microsoft.Windows.AI.Copilot.Provider*'
+    Remove-AppxSafe '*MicrosoftWindows.Client.Photon*'
+    Remove-AppxSafe '*Microsoft.549981C3F5F10*'
 
+    # Disable Copilot via Group Policy registry
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
     Set-RegistryValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowCopilotButton' 0
 
+    # 25H2 Copilot removal policy - April 2026
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Copilot' 'RemoveCopilotApp' 1
+
+    # Disable Recall and AI data analysis
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableAIDataAnalysis' 1
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'TurnOffSavingSnapshots' 1
 
+    # Attempt DISM removal of Recall optional feature (25H2+)
+    Write-Log 'Attempting DISM removal of Recall optional feature...' 'INFO'
+    $dismResult = dism /online /Disable-Feature /FeatureName:'Recall' /NoRestart 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log 'Recall removed via DISM' 'SUCCESS'
+    }
+    else {
+        Write-Log 'Recall not available as optional feature on this build - registry controls applied' 'WARN'
+    }
+
+    # Disable Click to Do (25H2 context menu AI actions)
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableClickToDo' 1
+
+    # Disable Input Insights (typing behavior tracking)
+    Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\input\Settings' 'InsightsEnabled' 0
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableInputInsights' 1
+
+    # Disable AI features in Paint, Photos, and Snipping Tool
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableImageCreator' 1
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableCocreator' 1
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableGenerativeFill' 1
+    Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableGenerativeErase' 1
+
+    # Disable Bing / AI in Windows Search
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
     Set-RegistryValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search' 'BingSearchEnabled' 0
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search' 'CortanaConsent' 0
 
+    # Disable Copilot in Edge
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'HubsSidebarEnabled' 0
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'CopilotCDPPageContext' 0
+
+    # Disable AI Fabric Service if present (25H2 background AI service)
+    Disable-ServiceSafe 'AIFabricService'       'AI Fabric Service'
+    Disable-ServiceSafe 'AIF'                   'AI Fabric'
 
     Write-Log 'AI/Copilot removal complete' 'SUCCESS'
 }
@@ -192,7 +235,7 @@ function Invoke-TelemetryPrivacy {
     Write-Log 'Telemetry/privacy optimization complete' 'SUCCESS'
 }
 
-# ---- Category 5: Bloatware Removal ----
+# ---- Category 4: Bloatware Removal ----
 function Invoke-RemoveBloatware {
     Write-Host ''
     Write-Host '  -- Removing Bloatware --' -ForegroundColor Magenta
@@ -216,7 +259,6 @@ function Invoke-RemoveBloatware {
         '*Microsoft.YourPhone*'
         '*Microsoft.WindowsCommunicationsApps*'
         '*Microsoft.MixedReality.Portal*'
-        '*Microsoft.549981C3F5F10*'
         '*Clipchamp.Clipchamp*'
         '*Microsoft.GamingApp*'
         '*MicrosoftTeams*'
@@ -236,7 +278,7 @@ function Invoke-RemoveBloatware {
     Write-Log 'Bloatware removal complete' 'SUCCESS'
 }
 
-# ---- Category 6: Spotlight and Lock Screen Extras ----
+# ---- Category 5: Spotlight and Lock Screen Extras ----
 function Invoke-DisableSpotlightExtras {
     Write-Host ''
     Write-Host '  -- Disabling Spotlight and Lock Screen Extras --' -ForegroundColor Magenta
