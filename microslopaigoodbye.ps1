@@ -215,6 +215,9 @@ function Invoke-TelemetryPrivacy {
 
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy' 'TailoredExperiencesWithDiagnosticDataEnabled' 0
 
+    # Disable Automatic Restart Sign-On (ARSO) - prevents background session at login screen
+    Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'DisableAutomaticRestartSignOn' 1
+
     $telemetryTasks = @(
         '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser'
         '\Microsoft\Windows\Application Experience\ProgramDataUpdater'
