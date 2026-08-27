@@ -1,4 +1,4 @@
-﻿﻿#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 # Windows 11 Optimization Script v2.1 - Interactive Menu
 # Updated for 24H2/25H2 AI features (Recall, Click to Do, Input Insights, AI Fabric)
 # Creates a restore point before changes. Logs to %TEMP%.
@@ -256,22 +256,17 @@ function Invoke-DisableSpotlightExtras {
 function Invoke-PerformanceUpdates {
     Write-Host ''
     Write-Host '  -- Performance and Update Control --' -ForegroundColor Magenta
-
     # ---- Boot Optimization ----
     bcdedit /timeout 3 | Out-Null
     Write-Log 'Boot timeout set to 3 seconds' 'SUCCESS'
-
     Set-RegistryValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 1
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Serialize' 'StartupDelayInMSec' 0
-
     # Disable tips and welcome experience after updates
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableSoftLanding' 1
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled' 0
-
     # ---- Memory Optimization ----
     # Disable SysMain (Superfetch) - speculative RAM preloading, negligible on NVMe
     Disable-ServiceSafe 'SysMain'              'SysMain / Superfetch'
-
     # Disable Reserved Storage (~7GB held back for updates)
     dism /online /Set-ReservedStorageState /State:Disabled 2>$null
     if ($LASTEXITCODE -eq 0) {
@@ -280,39 +275,31 @@ function Invoke-PerformanceUpdates {
     else {
         Write-Log 'Reserved Storage already disabled or not available' 'WARN'
     }
-
     # Disable all background UWP app activity
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications' 'GlobalUserDisabled' 1
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy' 'LetAppsRunInBackground' 2
-
     # Disable clipboard cloud sync and history
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'AllowClipboardHistory' 0
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'AllowCrossDeviceClipboard' 0
-
     # ---- CPU / Scheduling ----
     # Favor foreground apps in scheduler (0x26 = short quantum, variable, foreground boost)
     Set-RegistryValue 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' 'Win32PrioritySeparation' 38
-
     # ---- Gaming Performance ----
     # Disable Game Bar overlay
     Set-RegistryValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled' 0
     Set-RegistryValue 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled' 0
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' 'AllowGameDVR' 0
-
     # Disable fullscreen optimizations globally (reduces DWM input latency)
     Set-RegistryValue 'HKCU:\System\GameConfigStore' 'GameDVR_FSEBehaviorMode' 2
     Set-RegistryValue 'HKCU:\System\GameConfigStore' 'GameDVR_DXGIHonorFSEWindowsCompatible' 1
     Set-RegistryValue 'HKCU:\System\GameConfigStore' 'GameDVR_HonorUserFSEBehaviorMode' 1
-
     # ---- Disk I/O (NVMe) ----
     # Disable NTFS last access timestamp updates (reduces write I/O)
     fsutil behavior set disablelastaccess 1 2>$null
     Write-Log 'NTFS last access timestamps disabled' 'SUCCESS'
-
     # Disable 8.3 short filename creation (legacy DOS compat)
     fsutil behavior set disable8dot3 1 2>$null
     Write-Log '8.3 short filename creation disabled' 'SUCCESS'
-
     # ---- Network Optimization (1Gbps Ethernet) ----
     # Disable Nagle algorithm and set TCP ACK frequency per interface
     $ifPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces'
@@ -327,16 +314,13 @@ function Invoke-PerformanceUpdates {
         }
     }
     Write-Log ('Nagle disabled on ' + $nagleCount + ' network interfaces') 'SUCCESS'
-
     # Disable network throttling (multimedia scheduler 10 packets/ms limit)
     Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' 0xFFFFFFFF
     Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'SystemResponsiveness' 0
-
     # Increase network priority for gaming
     Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'GPU Priority' 8
     Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'Priority' 6
     Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'Scheduling Category' 'High' 'String'
-
     # ---- Power Plan ----
     powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -344,13 +328,22 @@ function Invoke-PerformanceUpdates {
         powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
     }
     Write-Log 'Power plan set to High Performance' 'SUCCESS'
-
+    # Configure sleep and display timeouts on active plan
+    # Never sleep - AC or DC
+    powercfg /change standby-timeout-ac 0 2>$null
+    powercfg /change standby-timeout-dc 0 2>$null
+    # Never hibernate
+    powercfg /change hibernate-timeout-ac 0 2>$null
+    powercfg /change hibernate-timeout-dc 0 2>$null
+    # Display off after 60 minutes - AC and DC
+    powercfg /change monitor-timeout-ac 60 2>$null
+    powercfg /change monitor-timeout-dc 60 2>$null
+    Write-Log 'Sleep disabled, display timeout set to 60 min' 'SUCCESS'
     # ---- Disable Delivery Optimization ----
     Disable-ServiceSafe 'DoSvc'                'Delivery Optimization'
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode' 0
     Set-RegistryValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config' 'DODownloadMode' 0
     Write-Log 'Delivery Optimization fully disabled' 'SUCCESS'
-
     # ---- Windows Update: Notify Only, No Auto-Install, No Auto-Reboot ----
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'AUOptions' 2
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'NoAutoUpdate' 0
@@ -358,14 +351,12 @@ function Invoke-PerformanceUpdates {
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'AlwaysAutoRebootAtScheduledTime' 0
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' 'SetComplianceDeadline' 0
     Set-RegistryValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' 'SetAutoRestartNotificationDisable' 0
-
     # Disable wake timers (prevents WU from waking PC to reboot)
     powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_SLEEP RTCWAKE 0 2>$null
     powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_SLEEP RTCWAKE 0 2>$null
     powercfg /SETACTIVE SCHEME_CURRENT 2>$null
     Write-Log 'Wake timers disabled' 'SUCCESS'
     Write-Log 'Windows Update set to notify only - auto-install and auto-reboot disabled' 'SUCCESS'
-
     # ---- Clean Temp Files ----
     $tempPaths = @($env:TEMP, (Join-Path $env:WINDIR 'Temp'), (Join-Path $env:WINDIR 'Prefetch'))
     foreach ($p in $tempPaths) {
@@ -375,7 +366,6 @@ function Invoke-PerformanceUpdates {
             Write-Log ('Cleaned ' + $count + ' items from ' + $p) 'SUCCESS'
         }
     }
-
     Write-Log 'Performance and update control complete' 'SUCCESS'
 }
 # ---- Main Menu ----
